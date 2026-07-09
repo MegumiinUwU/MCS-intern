@@ -88,6 +88,34 @@ namespace MCS_app.Controllers
             });
         }
 
+        // GET: api/employees/5/documents
+        [HttpGet("{id:int}/documents")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> GetDocuments(int id)
+        {
+            var employeeExists = await _context.Employees.AnyAsync(e => e.Id == id);
+            if (!employeeExists)
+            {
+                return NotFound(new { message = $"Employee with id {id} was not found." });
+            }
+
+            var documents = await _context.EmployeeDocuments
+                .AsNoTracking()
+                .Where(d => d.EmployeeId == id)
+                .OrderByDescending(d => d.UploadedAt)
+                .Select(d => new
+                {
+                    id = d.Id,
+                    fileName = d.FileName,
+                    contentType = d.ContentType,
+                    uploadedAt = d.UploadedAt
+                })
+                .ToListAsync();
+
+            return Ok(documents);
+        }
+
         // GET: api/employees/5/documents/3
         [HttpGet("{id:int}/documents/{documentId:int}")]
         [ProducesResponseType(StatusCodes.Status200OK)]
