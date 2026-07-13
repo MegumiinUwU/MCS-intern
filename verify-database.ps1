@@ -5,11 +5,25 @@
 
 $ErrorActionPreference = "Stop"
 
+# This is a BACKEND diagnostic: it must run on the machine that hosts
+# SQL Server, Kestrel and Caddy. The frontend machine does not have the
+# database and does not need it - it only calls the API over HTTP.
+
 Write-Host "1. Employees in SQL Server (localhost -> MCS_Employees):"
-$dbCount = (sqlcmd -S localhost -E -d MCS_Employees -h -1 -W `
-    -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM Employees;").Trim()
-$dbDocs = (sqlcmd -S localhost -E -d MCS_Employees -h -1 -W `
-    -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM EmployeeDocuments;").Trim()
+$dbCount = sqlcmd -S localhost -E -d MCS_Employees -h -1 -W `
+    -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM Employees;" 2>$null
+if ($LASTEXITCODE -ne 0 -or -not $dbCount) {
+    Write-Host ""
+    Write-Host "Could not reach SQL Server on 'localhost' from this machine." -ForegroundColor Red
+    Write-Host "This script must run on the BACKEND machine (where SQL Server," -ForegroundColor Yellow
+    Write-Host "Kestrel and Caddy live). The frontend does not need the database;" -ForegroundColor Yellow
+    Write-Host "it only needs the API: check http://<backend-address>/api/employees" -ForegroundColor Yellow
+    Write-Host "and look for the 'Via: 1.1 Caddy' response header." -ForegroundColor Yellow
+    exit 1
+}
+$dbCount = "$dbCount".Trim()
+$dbDocs = ("$(sqlcmd -S localhost -E -d MCS_Employees -h -1 -W `
+    -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM EmployeeDocuments;" 2>$null)").Trim()
 Write-Host "   $dbCount employees, $dbDocs documents"
 
 Write-Host "2. Employees returned by the API through Caddy (http://localhost/api/employees):"
