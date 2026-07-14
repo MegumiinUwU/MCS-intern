@@ -1,6 +1,8 @@
-# Stops the Kestrel API and the Caddy reverse proxy started by start-servers.ps1.
+# Stops the Kestrel API, the Caddy reverse proxy and the Cloudflare tunnel
+# started by start-servers.ps1 / start-tunnel.ps1.
 
 Get-Process caddy -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force
 Get-Process dotnet -ErrorAction SilentlyContinue |
     Where-Object { ($_ | Select-Object -ExpandProperty Path -ErrorAction SilentlyContinue) -and $_.MainModule.FileName -like "*dotnet*" } |
     ForEach-Object {

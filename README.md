@@ -22,6 +22,31 @@ Client ──► Caddy (:80) ──► Kestrel (http://localhost:5000)
 
 Then browse `http://localhost/swagger` or call the endpoints below on `http://localhost`.
 
+## Internet access (Cloudflare Tunnel)
+
+To expose the API to the internet without opening any ports or revealing this
+machine's IP, a **Cloudflare quick tunnel** sits above Caddy:
+
+```
+Internet ──HTTPS──► Cloudflare edge ──tunnel──► cloudflared ──► Caddy (:80) ──► Kestrel (:5000)
+```
+
+```powershell
+.\start-servers.ps1   # Kestrel + Caddy must be running first
+.\start-tunnel.ps1    # prints a random https://xxxx.trycloudflare.com URL
+```
+
+Anyone with that URL can then call the API over HTTPS (TLS, DDoS protection and
+Cloudflare's edge come for free). Notes:
+
+- The connection is **outbound-only**: nothing on this PC is directly reachable,
+  and only `localhost:80` (Caddy → the API) is forwarded — nothing else.
+- The `trycloudflare.com` URL is **random and changes on every run** — fine for
+  demos. For a permanent URL you need a domain added to the Cloudflare account
+  (then a named tunnel replaces the quick one).
+- The API has **no authentication**, so stop the tunnel when you are done
+  (`Ctrl+C` or `.\stop-servers.ps1`).
+
 ## Database
 
 All environments (development and published/production) use the **same** database:
