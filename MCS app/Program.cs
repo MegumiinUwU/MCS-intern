@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using MCS_app.Data;
 
@@ -5,6 +6,16 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddControllers();
+
+// Kestrel sits behind Caddy, which terminates TLS and forwards the original
+// scheme/client IP in X-Forwarded-* headers.
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    // Caddy runs on the same machine, so trust the loopback proxy only.
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
+});
 
 // EF Core + SQL Server
 builder.Services.AddDbContext<AppDbContext>(options =>
@@ -34,13 +45,14 @@ using (var scope = app.Services.CreateScope())
 }
 
 // Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+app.UseForwardedHeaders();
 
-app.UseHttpsRedirection();
+// Swagger stays enabled in all environments so it is reachable through Caddy.
+app.UseSwagger();
+app.UseSwaggerUI();
+
+// HTTPS redirection is handled by Caddy (the reverse proxy); Kestrel itself
+// only listens on plain HTTP on localhost.
 
 app.UseCors(CorsPolicy);
 

@@ -1,0 +1,13 @@
+# Caddy reverse proxy for the MCS Employee API.
+# Caddy listens on port 80 and forwards everything to Kestrel on localhost:5000.
+# Caddy automatically adds X-Forwarded-For / X-Forwarded-Proto headers,
+# which the API reads via its ForwardedHeaders middleware.
+
+:80 {
+	reverse_proxy localhost:5000
+
+	log {
+		output file logs/caddy-access.log
+		format json
+	}
+}
