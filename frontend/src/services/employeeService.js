@@ -1,4 +1,7 @@
-const API_URL = "https://localhost:7068/api/Employees";
+// Relative on purpose: the app and the API are served from the same origin
+// (Caddy :80 in production, the Vite proxy in dev), so this works unchanged
+// through the Cloudflare tunnel.
+const API_URL = "/api/employees";
 
 // ======================
 // Employees

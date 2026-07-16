@@ -1,7 +1,7 @@
 # Verifies that the API (served by Caddy + Kestrel) is using the correct database:
 # MCS_Employees on the full SQL Server instance (Server=localhost).
 # It compares what the API returns with what is actually in that database.
-# Run from the repository root:  .\verify-database.ps1
+# Run from the repository root:  .\scripts\verify-database.ps1
 
 $ErrorActionPreference = "Stop"
 

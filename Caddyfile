@@ -1,10 +1,30 @@
-# Caddy reverse proxy for the MCS Employee API.
-# Caddy listens on port 80 and forwards everything to Kestrel on localhost:5000.
-# Caddy automatically adds X-Forwarded-For / X-Forwarded-Proto headers,
-# which the API reads via its ForwardedHeaders middleware.
+# Caddy fronts the whole web app on port 80:
+#
+#   Client ──► Caddy (:80) ──┬─► /api*, /swagger*  ──► Kestrel (http://localhost:5000)
+#                            └─► everything else   ──► the React SPA in deploy/web
+#
+# Caddy adds X-Forwarded-For / X-Forwarded-Proto on the proxied routes, which the
+# API reads via its ForwardedHeaders middleware. Paths are relative to Caddy's
+# working directory, which start-servers.ps1 sets to the repository root.
 
 :80 {
-	reverse_proxy localhost:5000
+	# The API. The SPA calls these on the same origin, so no CORS is involved.
+	handle /api/* {
+		reverse_proxy localhost:5000
+	}
+
+	# Swagger UI and its swagger.json, also served by Kestrel.
+	handle /swagger* {
+		reverse_proxy localhost:5000
+	}
+
+	# The React single-page app. Unknown paths fall back to index.html so
+	# client-side routes survive a hard refresh.
+	handle {
+		root * deploy/web
+		try_files {path} /index.html
+		file_server
+	}
 
 	log {
 		output file logs/caddy-access.log

@@ -1,12 +1,13 @@
-# Exposes the API to the internet through a Cloudflare quick tunnel.
-# Requires Kestrel + Caddy to be running first (.\start-servers.ps1).
+# Exposes the whole web app (React front end + API) to the internet through a
+# Cloudflare quick tunnel.
+# Requires Kestrel + Caddy to be running first (.\scripts\start-servers.ps1).
 #
 # Security notes:
 #  - Outbound-only connection: no ports are opened on this PC and your IP stays hidden.
-#  - Only http://localhost:80 (Caddy -> the API) is exposed; nothing else on this machine.
+#  - Only http://localhost:80 (Caddy) is exposed; nothing else on this machine.
 #  - The https://xxxx.trycloudflare.com URL is random and changes every run.
-#  - The API has no authentication, so keep the tunnel running only while you need it
-#    (Ctrl+C here, or .\stop-servers.ps1, stops it).
+#  - The app has no authentication, so keep the tunnel running only while you need it
+#    (Ctrl+C here, or .\scripts\stop-servers.ps1, stops it).
 
 $cloudflared = (Get-Command cloudflared -ErrorAction SilentlyContinue).Source
 if (-not $cloudflared) {
@@ -17,7 +18,7 @@ if (-not (Test-Path $cloudflared)) {
     exit 1
 }
 
-Write-Host "Starting Cloudflare quick tunnel -> http://localhost:80 (Caddy -> Kestrel)"
+Write-Host "Starting Cloudflare quick tunnel -> http://localhost:80 (Caddy -> React app + Kestrel)"
 Write-Host "Look for the https://....trycloudflare.com URL in the banner below."
 Write-Host "Press Ctrl+C to stop the tunnel."
 Write-Host ""

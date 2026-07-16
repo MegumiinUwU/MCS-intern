@@ -1,5 +1,5 @@
 # Stops the Kestrel API, the Caddy reverse proxy and the Cloudflare tunnel
-# started by start-servers.ps1 / start-tunnel.ps1.
+# started by scripts\start-servers.ps1 / scripts\start-tunnel.ps1.
 
 Get-Process caddy -ErrorAction SilentlyContinue | Stop-Process -Force
 Get-Process cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force

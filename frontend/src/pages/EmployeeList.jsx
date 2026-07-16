@@ -29,10 +29,6 @@ function EmployeeList() {
             console.error("Error loading employees:", error);
         }
     }
-    useEffect(() => {
-        loadEmployees();
-    }, []);
-
 
     async function loadDocuments(employeeId) {
         try {
