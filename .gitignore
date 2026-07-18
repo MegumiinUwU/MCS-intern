@@ -3,6 +3,10 @@ bin/
 obj/
 publish/
 deploy/
+installer/dist/
+# SQL Server Express offline media (266 MB, exceeds GitHub's file size limit).
+# Re-download it as described in README "Building the installer package".
+installer/WebAppInstaller/Assets/Sql/
 
 ## Runtime logs (Caddy access log)
 logs/

@@ -2,10 +2,16 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Single-file publish embeds the Assets folder and extracts everything
+         (including Assets\) to a temp folder on first run, so the release is
+         ONE exe the user downloads and double-clicks. BaseDirectory then points
+         at the extraction folder, so the runtime Assets lookup keeps working. -->
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
   </PropertyGroup>
 	<ItemGroup>
 		<Content Include="Assets\**\*">
@@ -14,7 +20,7 @@
 		</Content>
 	</ItemGroup>
 	<ItemGroup>
-	  <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.10" />
+	  <PackageReference Include="System.ServiceProcess.ServiceController" Version="8.0.1" />
 	</ItemGroup>
 
 </Project>

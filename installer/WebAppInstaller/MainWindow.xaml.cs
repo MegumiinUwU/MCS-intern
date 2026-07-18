@@ -1,7 +1,11 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
+using System.Security;
+using System.ServiceProcess;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 
@@ -79,17 +83,33 @@ namespace WebAppInstaller
                 string webDestination = Path.Combine(installFolder, "Web");
                 string caddyDestination = Path.Combine(installFolder, "Caddy");
 
+                string apiTaskName = $"{appName}-Api";
+                string caddyTaskName = $"{appName}-Caddy";
+
                 Directory.CreateDirectory(parentFolder);
                 Directory.CreateDirectory(installFolder);
 
-                // 1. إنهاء العمليات السابقة إجبارياً
+                // 1. تنصيب SQL Server Express صامتاً إن لم يكن موجوداً، ثم تشغيله
+                if (FindSqlService() == null)
+                {
+                    txtStatus.Text = "Installing SQL Server Express (first time only, this can take 10-15 minutes)...";
+                    string sqlSetupExe = Path.Combine(assetsFolder, "Sql", "SQLEXPR_x64_ENU.exe");
+                    await Task.Run(() => InstallSqlServerExpress(sqlSetupExe));
+                }
+
+                txtStatus.Text = "Starting SQL Server...";
+                await Task.Run(() => EnsureSqlServerRunning());
+
+                // 2. إيقاف المهام المجدولة والعمليات السابقة قبل استبدال الملفات
                 txtStatus.Text = "Stopping previous instances...";
                 await Task.Run(() =>
                 {
+                    StopScheduledTask(apiTaskName);
+                    StopScheduledTask(caddyTaskName);
                     KillAllPreviousProcesses(appName);
                 });
 
-                // 2. نسخ الملفات وإعادة تسمية ملف الـ API
+                // 3. نسخ الملفات وإعادة تسمية ملف الـ API
                 txtStatus.Text = "Copying files...";
                 await Task.Run(() =>
                 {
@@ -111,22 +131,9 @@ namespace WebAppInstaller
                     }
                 });
 
-                // 3. إنشاء Caddyfile المُحدث بدون Cache
+                // 4. إنشاء Caddyfile المُحدث بدون Cache
                 txtStatus.Text = "Creating Caddyfile...";
                 CreateCaddyFile(caddyDestination, webDestination, appName);
-
-                // 4. تشغيل الـ API بالاسم الجديد
-                txtStatus.Text = "Starting API Application...";
-                string apiExe = Path.Combine(apiDestination, $"{appName}.exe");
-                if (!File.Exists(apiExe))
-                    throw new FileNotFoundException($"API executable not found at: {apiExe}");
-
-                StartBackgroundProcess(apiExe, apiDestination, "");
-
-                if (!await WaitUntilAsync(IsApiRunning, TimeSpan.FromSeconds(15)))
-                {
-                    throw new InvalidOperationException($"API did not respond on port {ApiPort} within 15 seconds.");
-                }
 
                 // 5. إضافة استثناء في الجدار الناري لـ Caddy لمنع ظهور رسالة Allow / Cancel
                 txtStatus.Text = "Configuring Firewall...";
@@ -136,27 +143,55 @@ namespace WebAppInstaller
 
                 await Task.Run(() => AddFirewallRule(caddyExe));
 
-                // 6. تشغيل Caddy Server
-                txtStatus.Text = "Starting Caddy Server...";
-                StartBackgroundProcess(caddyExe, caddyDestination, "run --config Caddyfile");
+                // 6. تسجيل مهام مجدولة تعمل كـ SYSTEM عند إقلاع الجهاز حتى يظل التطبيق
+                //    يعمل 24/7 بدون تسجيل دخول أي مستخدم، مع إعادة التشغيل عند الفشل
+                txtStatus.Text = "Registering startup tasks...";
+                string apiExe = Path.Combine(apiDestination, $"{appName}.exe");
+                if (!File.Exists(apiExe))
+                    throw new FileNotFoundException($"API executable not found at: {apiExe}");
 
-                if (!await WaitUntilAsync(IsCaddyRunning, TimeSpan.FromSeconds(10)))
+                await Task.Run(() =>
                 {
-                    throw new InvalidOperationException("Caddy server did not start responding on port 80 within 10 seconds.");
+                    RegisterBootTask(apiTaskName, apiExe, "", apiDestination,
+                        $"Runs the {appName} API (Kestrel) at system startup.");
+                    RegisterBootTask(caddyTaskName, caddyExe, "run --config Caddyfile", caddyDestination,
+                        $"Runs the Caddy web server for {appName} at system startup.");
+                });
+
+                // 7. تشغيل الـ API عن طريق المهمة المجدولة نفسها (نفس آلية الإقلاع)
+                txtStatus.Text = "Starting API Application...";
+                await Task.Run(() => RunScheduledTask(apiTaskName));
+
+                if (!await WaitUntilAsync(IsApiRunning, TimeSpan.FromSeconds(30)))
+                {
+                    throw new InvalidOperationException($"API did not respond on port {ApiPort} within 30 seconds.");
                 }
 
-                // 7. فتح المتصفح فوراً والتركيز عليه
-                txtStatus.Text = "Opening Browser...";
+                // 8. تشغيل Caddy Server
+                txtStatus.Text = "Starting Caddy Server...";
+                await Task.Run(() => RunScheduledTask(caddyTaskName));
+
+                if (!await WaitUntilAsync(IsCaddyRunning, TimeSpan.FromSeconds(15)))
+                {
+                    throw new InvalidOperationException("Caddy server did not start responding on port 80 within 15 seconds.");
+                }
+
                 string machineName = Environment.MachineName;
                 string targetUrl = $"http://{machineName}/{appName}/";
 
+                // 9. اختصار على سطح المكتب حتى يفتح المستخدم الصفحة في أي وقت
+                txtStatus.Text = "Creating desktop shortcut...";
+                CreateDesktopShortcut(appName, targetUrl);
+
+                // 10. فتح المتصفح فوراً والتركيز عليه
+                txtStatus.Text = "Opening Browser...";
                 Process.Start(new ProcessStartInfo
                 {
                     FileName = targetUrl,
                     UseShellExecute = true
                 });
 
-                txtStatus.Text = "Deployment Completed";
+                txtStatus.Text = "Deployment Completed - the app now starts automatically with Windows.";
             }
             catch (Exception ex)
             {
@@ -172,20 +207,177 @@ namespace WebAppInstaller
 
         #endregion
 
+        #region Region: Prerequisites
+
+        private ServiceController? FindSqlService()
+        {
+            // الـ API يتصل بـ localhost\SQLEXPRESS تحديداً (appsettings.json)،
+            // لذلك نبحث عن خدمة هذه النسخة بالذات وليس أي SQL Server آخر
+            return ServiceController.GetServices().FirstOrDefault(s =>
+                s.ServiceName.Equals("MSSQL$SQLEXPRESS", StringComparison.OrdinalIgnoreCase));
+        }
+
+        private void InstallSqlServerExpress(string sqlSetupExe)
+        {
+            if (!File.Exists(sqlSetupExe))
+            {
+                throw new FileNotFoundException(
+                    $"SQL Server Express setup not found at: {sqlSetupExe}\n\n" +
+                    "The installer package is incomplete - the Assets\\Sql folder must contain SQLEXPR_x64_ENU.exe.");
+            }
+
+            // تنصيب صامت: نسخة SQLEXPRESS (تطابق سلسلة الاتصال في appsettings.json)،
+            // تشغيل تلقائي مع الويندوز، وإضافة SYSTEM كمسؤول حتى تستطيع المهمة
+            // المجدولة (التي تعمل كـ SYSTEM) إنشاء قاعدة البيانات والاتصال بها.
+            // /QS يعرض شريط التقدم فقط بدون أي أسئلة للمستخدم.
+            string arguments =
+                "/QS /IACCEPTSQLSERVERLICENSETERMS /ACTION=Install /FEATURES=SQLEngine " +
+                "/INSTANCENAME=SQLEXPRESS /SQLSVCSTARTUPTYPE=Automatic " +
+                "/SQLSYSADMINACCOUNTS=\"BUILTIN\\Administrators\" \"NT AUTHORITY\\SYSTEM\" " +
+                "/TCPENABLED=1";
+
+            int exitCode = RunTool(sqlSetupExe, arguments);
+
+            // 3010 = نجاح مع الحاجة لإعادة تشغيل الجهاز لاحقاً (الخدمة تعمل الآن بالفعل)
+            if (exitCode != 0 && exitCode != 3010)
+            {
+                throw new InvalidOperationException(
+                    $"SQL Server Express installation failed (setup exit code {exitCode}).\n\n" +
+                    "Setup logs: C:\\Program Files\\Microsoft SQL Server\\160\\Setup Bootstrap\\Log");
+            }
+
+            if (FindSqlService() == null)
+            {
+                throw new InvalidOperationException(
+                    "SQL Server Express setup finished but no SQL Server service was found.");
+            }
+        }
+
+        private void EnsureSqlServerRunning()
+        {
+            ServiceController? sql = FindSqlService();
+
+            if (sql == null)
+            {
+                throw new InvalidOperationException(
+                    "SQL Server is not installed on this machine and automatic installation did not run.");
+            }
+
+            sql.Refresh();
+            if (sql.Status != ServiceControllerStatus.Running)
+            {
+                sql.Start();
+                sql.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(60));
+            }
+
+            // ضبط الخدمة على التشغيل التلقائي حتى تعمل قاعدة البيانات بعد إعادة التشغيل
+            RunTool("sc", $"config \"{sql.ServiceName}\" start= auto");
+        }
+
+        #endregion
+
+        #region Region: Scheduled Tasks (24/7 auto-start)
+
+        private void RegisterBootTask(string taskName, string exePath, string arguments, string workingDirectory, string description)
+        {
+            // مهمة مجدولة تعمل كـ SYSTEM عند الإقلاع: لا تحتاج تسجيل دخول، بدون حد زمني،
+            // وتُعاد تشغيلها تلقائياً كل دقيقة إذا توقفت لأي سبب
+            string argumentsXml = string.IsNullOrEmpty(arguments)
+                ? ""
+                : $"<Arguments>{SecurityElement.Escape(arguments)}</Arguments>";
+
+            string xml = $@"<?xml version=""1.0"" encoding=""UTF-16""?>
+<Task version=""1.2"" xmlns=""http://schemas.microsoft.com/windows/2004/02/mit/task"">
+  <RegistrationInfo>
+    <Description>{SecurityElement.Escape(description)}</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <BootTrigger>
+      <Enabled>true</Enabled>
+    </BootTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id=""Author"">
+      <UserId>S-1-5-18</UserId>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>999</Count>
+    </RestartOnFailure>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context=""Author"">
+    <Exec>
+      <Command>{SecurityElement.Escape(exePath)}</Command>
+      {argumentsXml}
+      <WorkingDirectory>{SecurityElement.Escape(workingDirectory)}</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>";
+
+            string xmlPath = Path.Combine(Path.GetTempPath(), $"{taskName}.xml");
+            File.WriteAllText(xmlPath, xml, Encoding.Unicode);
+
+            try
+            {
+                int exitCode = RunTool("schtasks", $"/Create /TN \"{taskName}\" /XML \"{xmlPath}\" /F");
+                if (exitCode != 0)
+                    throw new InvalidOperationException(
+                        $"Failed to register the startup task \"{taskName}\" (schtasks exit code {exitCode}). " +
+                        "Make sure the installer is running as Administrator.");
+            }
+            finally
+            {
+                try { File.Delete(xmlPath); } catch { }
+            }
+        }
+
+        private void RunScheduledTask(string taskName)
+        {
+            int exitCode = RunTool("schtasks", $"/Run /TN \"{taskName}\"");
+            if (exitCode != 0)
+                throw new InvalidOperationException($"Failed to start the scheduled task \"{taskName}\".");
+        }
+
+        private void StopScheduledTask(string taskName)
+        {
+            // إيقاف المهمة إن كانت موجودة من تنصيب سابق (يُتجاهل الفشل إن لم تكن موجودة)
+            RunTool("schtasks", $"/End /TN \"{taskName}\"");
+        }
+
+        #endregion
+
         #region Region: Process Controller
 
-        private void StartBackgroundProcess(string exePath, string workingDirectory, string arguments)
+        private int RunTool(string fileName, string arguments)
         {
             var psi = new ProcessStartInfo
             {
-                FileName = exePath,
+                FileName = fileName,
                 Arguments = arguments,
-                WorkingDirectory = workingDirectory,
-                UseShellExecute = false,
-                CreateNoWindow = true
+                CreateNoWindow = true,
+                UseShellExecute = false
             };
 
-            Process.Start(psi);
+            using var process = Process.Start(psi);
+            if (process == null)
+                return -1;
+
+            process.WaitForExit();
+            return process.ExitCode;
         }
 
         private void KillAllPreviousProcesses(string appName)
@@ -193,31 +385,13 @@ namespace WebAppInstaller
             try
             {
                 // إنهاء Caddy
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = "taskkill",
-                    Arguments = "/F /IM caddy.exe /T",
-                    CreateNoWindow = true,
-                    UseShellExecute = false
-                })?.WaitForExit();
+                RunTool("taskkill", "/F /IM caddy.exe /T");
 
                 // إنهاء الـ API بالاسم الجديد
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = "taskkill",
-                    Arguments = $"/F /IM \"{appName}.exe\" /T",
-                    CreateNoWindow = true,
-                    UseShellExecute = false
-                })?.WaitForExit();
+                RunTool("taskkill", $"/F /IM \"{appName}.exe\" /T");
 
                 // إنهاء الاسم القديم للـ API احترازيًا
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = "taskkill",
-                    Arguments = "/F /IM \"MCS app.exe\" /T",
-                    CreateNoWindow = true,
-                    UseShellExecute = false
-                })?.WaitForExit();
+                RunTool("taskkill", "/F /IM \"MCS app.exe\" /T");
             }
             catch
             {
@@ -230,15 +404,8 @@ namespace WebAppInstaller
             try
             {
                 // إضافة قاعدة السماح لبرنامج Caddy في الجدار الناري لتجنب مطالبات المستخدم
-                var psi = new ProcessStartInfo
-                {
-                    FileName = "netsh",
-                    Arguments = $"advfirewall firewall add rule name=\"CaddyServerRule\" dir=in action=allow program=\"{caddyExePath}\" enable=yes",
-                    CreateNoWindow = true,
-                    UseShellExecute = false
-                };
-
-                Process.Start(psi)?.WaitForExit();
+                RunTool("netsh",
+                    $"advfirewall firewall add rule name=\"CaddyServerRule\" dir=in action=allow program=\"{caddyExePath}\" enable=yes");
             }
             catch
             {
@@ -325,6 +492,14 @@ namespace WebAppInstaller
 }}
 ";
             File.WriteAllText(caddyFile, content);
+        }
+
+        private void CreateDesktopShortcut(string appName, string url)
+        {
+            // اختصار .url على سطح المكتب المشترك لكل المستخدمين
+            string desktop = Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory);
+            string shortcutPath = Path.Combine(desktop, $"{appName}.url");
+            File.WriteAllText(shortcutPath, $"[InternetShortcut]\r\nURL={url}\r\n");
         }
 
         #endregion
