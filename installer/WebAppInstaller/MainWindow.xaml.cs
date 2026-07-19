@@ -104,7 +104,7 @@ namespace WebAppInstaller
                 txtStatus.Text = "Stopping previous instances...";
                 await Task.Run(() =>
                 {
-                    StopScheduledTask(apiTaskName);
+                    RemoveApiService(apiTaskName);   // remove any prior API service so re-installs don't pile up
                     StopScheduledTask(caddyTaskName);
                     KillAllPreviousProcesses(appName);
                 });
@@ -143,8 +143,8 @@ namespace WebAppInstaller
 
                 await Task.Run(() => AddFirewallRule(caddyExe));
 
-                // 6. تسجيل مهام مجدولة تعمل كـ SYSTEM عند إقلاع الجهاز حتى يظل التطبيق
-                //    يعمل 24/7 بدون تسجيل دخول أي مستخدم، مع إعادة التشغيل عند الفشل
+                // 6. تسجيل الـ API كخدمة Windows (تعمل كـ LocalSystem، تبدأ تلقائياً
+                //    مع الإقلاع، وتُعاد تشغيلها عند الفشل). Caddy يبقى كمهمة مجدولة.
                 txtStatus.Text = "Registering startup tasks...";
                 string apiExe = Path.Combine(apiDestination, $"{appName}.exe");
                 if (!File.Exists(apiExe))
@@ -152,15 +152,15 @@ namespace WebAppInstaller
 
                 await Task.Run(() =>
                 {
-                    RegisterBootTask(apiTaskName, apiExe, "", apiDestination,
-                        $"Runs the {appName} API (Kestrel) at system startup.");
+                    RegisterApiService(apiTaskName, apiExe,
+                        $"Runs the {appName} API (Kestrel) as a Windows Service.");
                     RegisterBootTask(caddyTaskName, caddyExe, "run --config Caddyfile", caddyDestination,
                         $"Runs the Caddy web server for {appName} at system startup.");
                 });
 
-                // 7. تشغيل الـ API عن طريق المهمة المجدولة نفسها (نفس آلية الإقلاع)
+                // 7. تشغيل خدمة الـ API
                 txtStatus.Text = "Starting API Application...";
-                await Task.Run(() => RunScheduledTask(apiTaskName));
+                await Task.Run(() => StartApiService(apiTaskName));
 
                 if (!await WaitUntilAsync(IsApiRunning, TimeSpan.FromSeconds(30)))
                 {
@@ -272,6 +272,64 @@ namespace WebAppInstaller
 
             // ضبط الخدمة على التشغيل التلقائي حتى تعمل قاعدة البيانات بعد إعادة التشغيل
             RunTool("sc", $"config \"{sql.ServiceName}\" start= auto");
+        }
+
+        #endregion
+
+        #region Region: Windows Service (API)
+
+        // يسجّل الـ API كخدمة Windows: تعمل كـ LocalSystem، تبدأ تلقائياً مع الإقلاع،
+        // وتُعاد تشغيلها بعد دقيقة إذا توقفت. الـ EXE مبني بـ UseWindowsService()
+        // فيتكامل مع SCM ويقرأ appsettings.json من مجلده (ContentRoot الصحيح).
+        private void RegisterApiService(string serviceName, string exePath, string description)
+        {
+            // binPath يجب أن يكون بين علامتي اقتباس لأن المسار يحتوي مسافات.
+            // الصياغة الغريبة "start= auto" (مسافة بعد =) مطلوبة من أداة sc.
+            int create = RunTool("sc", $"create \"{serviceName}\" binPath= \"\\\"{exePath}\\\"\" start= auto");
+            if (create != 0)
+                throw new InvalidOperationException(
+                    $"Failed to register the Windows Service \"{serviceName}\" (sc create exit code {create}). " +
+                    "Make sure the installer is running as Administrator.");
+
+            RunTool("sc", $"description \"{serviceName}\" \"{description}\"");
+
+            // إعادة التشغيل عند الفشل: كل فشل يُعاد تشغيله بعد 60 ثانية، مع تصفير العداد يومياً.
+            RunTool("sc", $"failure \"{serviceName}\" reset= 86400 actions= restart/60000/restart/60000/restart/60000");
+        }
+
+        private void StartApiService(string serviceName)
+        {
+            using var svc = new ServiceController(serviceName);
+            if (svc.Status != ServiceControllerStatus.Running)
+            {
+                svc.Start();
+                svc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(30));
+            }
+        }
+
+        // يوقف ويحذف أي خدمة API سابقة بنفس الاسم حتى لا تتراكم الخدمات عند إعادة التنصيب.
+        private void RemoveApiService(string serviceName)
+        {
+            bool exists = ServiceController.GetServices()
+                .Any(s => s.ServiceName.Equals(serviceName, StringComparison.OrdinalIgnoreCase));
+            if (!exists)
+                return;
+
+            try
+            {
+                using var svc = new ServiceController(serviceName);
+                if (svc.Status != ServiceControllerStatus.Stopped)
+                {
+                    svc.Stop();
+                    svc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(30));
+                }
+            }
+            catch
+            {
+                // الخدمة قد تكون في حالة لا تسمح بالإيقاف؛ نتابع للحذف على أي حال.
+            }
+
+            RunTool("sc", $"delete \"{serviceName}\"");
         }
 
         #endregion
