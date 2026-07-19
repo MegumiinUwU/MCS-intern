@@ -286,7 +286,10 @@ namespace WebAppInstaller
         private void RegisterApiService(string serviceName, string exePath, string description)
         {
            
-            int create = RunTool("sc", $"create \"{serviceName}\" binPath= \"\\\"{exePath}\\\"\" start= auto");
+            // depend= MSSQL$SQLEXPRESS: at boot the SCM starts the API only after
+            // SQL Server is up, so database init doesn't fail in the race window
+            // (the installer guarantees this instance exists before we get here).
+            int create = RunTool("sc", $"create \"{serviceName}\" binPath= \"\\\"{exePath}\\\"\" start= auto depend= MSSQL$SQLEXPRESS");
             if (create != 0)
                 throw new InvalidOperationException(
                     $"Failed to register the Windows Service \"{serviceName}\" (sc create exit code {create}). " +
