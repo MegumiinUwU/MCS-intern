@@ -278,13 +278,10 @@ namespace WebAppInstaller
 
         #region Region: Windows Service (API)
 
-        // يسجّل الـ API كخدمة Windows: تعمل كـ LocalSystem، تبدأ تلقائياً مع الإقلاع،
-        // وتُعاد تشغيلها بعد دقيقة إذا توقفت. الـ EXE مبني بـ UseWindowsService()
-        // فيتكامل مع SCM ويقرأ appsettings.json من مجلده (ContentRoot الصحيح).
+      
         private void RegisterApiService(string serviceName, string exePath, string description)
         {
-            // binPath يجب أن يكون بين علامتي اقتباس لأن المسار يحتوي مسافات.
-            // الصياغة الغريبة "start= auto" (مسافة بعد =) مطلوبة من أداة sc.
+           
             int create = RunTool("sc", $"create \"{serviceName}\" binPath= \"\\\"{exePath}\\\"\" start= auto");
             if (create != 0)
                 throw new InvalidOperationException(
@@ -293,7 +290,6 @@ namespace WebAppInstaller
 
             RunTool("sc", $"description \"{serviceName}\" \"{description}\"");
 
-            // إعادة التشغيل عند الفشل: كل فشل يُعاد تشغيله بعد 60 ثانية، مع تصفير العداد يومياً.
             RunTool("sc", $"failure \"{serviceName}\" reset= 86400 actions= restart/60000/restart/60000/restart/60000");
         }
 
@@ -307,7 +303,6 @@ namespace WebAppInstaller
             }
         }
 
-        // يوقف ويحذف أي خدمة API سابقة بنفس الاسم حتى لا تتراكم الخدمات عند إعادة التنصيب.
         private void RemoveApiService(string serviceName)
         {
             bool exists = ServiceController.GetServices()
@@ -326,7 +321,6 @@ namespace WebAppInstaller
             }
             catch
             {
-                // الخدمة قد تكون في حالة لا تسمح بالإيقاف؛ نتابع للحذف على أي حال.
             }
 
             RunTool("sc", $"delete \"{serviceName}\"");
@@ -338,8 +332,7 @@ namespace WebAppInstaller
 
         private void RegisterBootTask(string taskName, string exePath, string arguments, string workingDirectory, string description)
         {
-            // مهمة مجدولة تعمل كـ SYSTEM عند الإقلاع: لا تحتاج تسجيل دخول، بدون حد زمني،
-            // وتُعاد تشغيلها تلقائياً كل دقيقة إذا توقفت لأي سبب
+         
             string argumentsXml = string.IsNullOrEmpty(arguments)
                 ? ""
                 : $"<Arguments>{SecurityElement.Escape(arguments)}</Arguments>";
@@ -412,7 +405,6 @@ namespace WebAppInstaller
 
         private void StopScheduledTask(string taskName)
         {
-            // إيقاف المهمة إن كانت موجودة من تنصيب سابق (يُتجاهل الفشل إن لم تكن موجودة)
             RunTool("schtasks", $"/End /TN \"{taskName}\"");
         }
 
@@ -442,18 +434,14 @@ namespace WebAppInstaller
         {
             try
             {
-                // إنهاء Caddy
                 RunTool("taskkill", "/F /IM caddy.exe /T");
 
-                // إنهاء الـ API بالاسم الجديد
                 RunTool("taskkill", $"/F /IM \"{appName}.exe\" /T");
 
-                // إنهاء الاسم القديم للـ API احترازيًا
                 RunTool("taskkill", "/F /IM \"MCS app.exe\" /T");
             }
             catch
             {
-                // تجاهل أي استثناء في حالة عدم وجود عمليات مفعلة
             }
         }
 
@@ -461,13 +449,11 @@ namespace WebAppInstaller
         {
             try
             {
-                // إضافة قاعدة السماح لبرنامج Caddy في الجدار الناري لتجنب مطالبات المستخدم
                 RunTool("netsh",
                     $"advfirewall firewall add rule name=\"CaddyServerRule\" dir=in action=allow program=\"{caddyExePath}\" enable=yes");
             }
             catch
             {
-                // تجاهل خطأ الجدار الناري في حال عدم التشغيل كـ Admin
             }
         }
 
@@ -554,7 +540,6 @@ namespace WebAppInstaller
 
         private void CreateDesktopShortcut(string appName, string url)
         {
-            // اختصار .url على سطح المكتب المشترك لكل المستخدمين
             string desktop = Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory);
             string shortcutPath = Path.Combine(desktop, $"{appName}.url");
             File.WriteAllText(shortcutPath, $"[InternetShortcut]\r\nURL={url}\r\n");
