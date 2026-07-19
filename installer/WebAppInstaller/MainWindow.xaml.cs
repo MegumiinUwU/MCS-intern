@@ -105,6 +105,10 @@ namespace WebAppInstaller
                 await Task.Run(() =>
                 {
                     RemoveApiService(apiTaskName);   // remove any prior API service so re-installs don't pile up
+                    // Older installers ran the API from a boot scheduled task with this
+                    // same name; delete it or it would keep starting a second API
+                    // (fighting the service over port 5000) on every reboot.
+                    RemoveScheduledTask(apiTaskName);
                     StopScheduledTask(caddyTaskName);
                     KillAllPreviousProcesses(appName);
                 });
@@ -406,6 +410,12 @@ namespace WebAppInstaller
         private void StopScheduledTask(string taskName)
         {
             RunTool("schtasks", $"/End /TN \"{taskName}\"");
+        }
+
+        private void RemoveScheduledTask(string taskName)
+        {
+            RunTool("schtasks", $"/End /TN \"{taskName}\"");
+            RunTool("schtasks", $"/Delete /TN \"{taskName}\" /F");
         }
 
         #endregion

@@ -80,16 +80,22 @@ What the installer does on that first double click:
 2. Copies the self-contained API (no .NET runtime needed), the React build, and
    Caddy to `C:\DeployedApps\<name>\`.
 3. Adds a firewall rule for Caddy so the app is reachable from the LAN.
-4. Registers two **Task Scheduler** tasks (`<name>-Api`, `<name>-Caddy`) that
-   run as `SYSTEM` on **system boot**, with no time limit and automatic restart
-   on failure. This is what makes the app run 24/7: it starts before anyone
-   logs in and comes back by itself after every reboot or crash.
+4. Registers the API as a **Windows Service** (`<name>-Api`) running as
+   `LocalSystem`: automatic start at boot and automatic restart on failure
+   (`sc failure`, retried every minute). Caddy is registered as a **Task
+   Scheduler** boot task (`<name>-Caddy`) running as `SYSTEM`, with no time
+   limit and automatic restart on failure. This is what makes the app run
+   24/7: both start before anyone logs in and come back by themselves after
+   every reboot or crash.
 5. Puts a shortcut on the desktop pointing to `http://<machine>/<name>/` and
    opens the browser on the employees page.
 
-To stop the app: open Task Scheduler, end and disable the `<name>-Api` and
-`<name>-Caddy` tasks (just killing the processes is not enough, they restart).
-Re-running the installer with the same name redeploys in place.
+To stop the app: stop and disable the `<name>-Api` service in `services.msc`,
+then end and disable the `<name>-Caddy` task in Task Scheduler (just killing
+the processes is not enough, they restart). Re-running the installer with the
+same name redeploys in place; it also cleans up the `<name>-Api` scheduled
+task left behind by installers older than v1.0.0, which used a boot task
+instead of a service for the API.
 
 ## Repository layout
 
@@ -148,10 +154,11 @@ so stop the tunnel when done (`Ctrl+C` or `.\scripts\stop-servers.ps1`).
 ## Building the installer package
 
 ```powershell
-# 1. Refresh the bundled API (self-contained, no .NET needed on target):
-dotnet publish "backend\MCS app.csproj" -c Release -r win-x64 --self-contained true -o installer\WebAppInstaller\Assets\Api
-#    then restore Assets\Api\appsettings.json (it points at localhost\SQLEXPRESS,
-#    while backend\appsettings.json points at localhost).
+# 1. Refresh the bundled API. The FolderProfile1 profile forces a self-contained
+#    win-x64 publish (no .NET needed on target), outputs straight into
+#    installer\WebAppInstaller\Assets\Api, and swaps in appsettings.Installer.json
+#    (localhost\SQLEXPRESS) as the bundle's appsettings.json automatically:
+dotnet publish "backend\MCS app.csproj" -c Release -p:PublishProfile=FolderProfile1
 
 # 2. Refresh the bundled front end (if it changed):
 cd frontend; npm ci; npm run build   # then copy deploy\web -> installer\WebAppInstaller\Assets\Web
@@ -173,9 +180,11 @@ download, double click, done.
 
 All environments use the same database: `MCS_Employees` on the local SQL Server
 instance, Windows auth. Development machines use `Server=localhost`
-(`backend/appsettings.json`); the installer's bundled config uses
-`Server=localhost\SQLEXPRESS`, the instance its silent SQL setup creates. The
-API creates the database and seed data on first start (`EnsureCreated`).
+(`backend/appsettings.json`); the installer's bundle uses
+`backend/appsettings.Installer.json` (`Server=localhost\SQLEXPRESS`, the
+instance its silent SQL setup creates), swapped in as `appsettings.json` by
+the publish profile. The API creates the database and seed data on first
+start (`EnsureCreated`).
 
 To confirm the frontend is hitting the right stack and database during
 development:
