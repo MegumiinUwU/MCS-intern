@@ -11,6 +11,9 @@ installer/WebAppInstaller/Assets/Sql/
 ## Runtime logs (Caddy access log)
 logs/
 
+## Uploaded employee documents (physical files, not committed)
+backend/UploadedFiles/
+
 ## Visual Studio
 .vs/
 *.user

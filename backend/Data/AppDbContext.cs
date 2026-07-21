@@ -30,7 +30,7 @@ namespace MCS_app.Data
                 entity.HasKey(d => d.Id);
                 entity.Property(d => d.FileName).HasMaxLength(255).IsRequired();
                 entity.Property(d => d.ContentType).HasMaxLength(100).IsRequired();
-                entity.Property(d => d.Data).IsRequired();
+                entity.Property(d => d.FilePath).HasMaxLength(500).IsRequired();
                 entity.HasOne<Employee>()
                     .WithMany()
                     .HasForeignKey(d => d.EmployeeId)

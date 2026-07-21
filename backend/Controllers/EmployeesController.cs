@@ -10,10 +10,21 @@ namespace MCS_app.Controllers
     public class EmployeesController : ControllerBase
     {
         private readonly AppDbContext _context;
+        private readonly string _documentsBasePath;
 
-        public EmployeesController(AppDbContext context)
+        public EmployeesController(AppDbContext context, IWebHostEnvironment environment, IConfiguration configuration)
         {
             _context = context;
+
+            // Physical folder documents are written to/read from. Configurable via
+            // "DocumentStorage:BasePath" (absolute path allowed); relative paths
+            // resolve against the app's content root.
+            var configuredPath = configuration["DocumentStorage:BasePath"] ?? "UploadedFiles";
+            _documentsBasePath = Path.IsPathRooted(configuredPath)
+                ? configuredPath
+                : Path.Combine(environment.ContentRootPath, configuredPath);
+
+            Directory.CreateDirectory(_documentsBasePath);
         }
 
         // GET: api/employees
@@ -65,15 +76,26 @@ namespace MCS_app.Controllers
                 return BadRequest(new { message = "No file was uploaded." });
             }
 
-            using var memoryStream = new MemoryStream();
-            await file.CopyToAsync(memoryStream);
+            var employeeFolder = Path.Combine(_documentsBasePath, id.ToString());
+            Directory.CreateDirectory(employeeFolder);
+
+            // Store under a generated name (not the user-supplied file name) so
+            // uploads can never collide or escape the employee's folder.
+            var extension = Path.GetExtension(Path.GetFileName(file.FileName));
+            var storedFileName = $"{Guid.NewGuid()}{extension}";
+            var relativePath = Path.Combine(id.ToString(), storedFileName);
+
+            using (var fileStream = new FileStream(Path.Combine(_documentsBasePath, relativePath), FileMode.Create))
+            {
+                await file.CopyToAsync(fileStream);
+            }
 
             var document = new EmployeeDocument
             {
                 EmployeeId = id,
                 FileName = file.FileName,
                 ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
-                Data = memoryStream.ToArray(),
+                FilePath = relativePath,
                 UploadedAt = DateTime.UtcNow
             };
 
@@ -131,7 +153,13 @@ namespace MCS_app.Controllers
                 return NotFound(new { message = $"Document with id {documentId} was not found for employee {id}." });
             }
 
-            return File(document.Data, document.ContentType, document.FileName);
+            var fullPath = Path.Combine(_documentsBasePath, document.FilePath);
+            if (!System.IO.File.Exists(fullPath))
+            {
+                return NotFound(new { message = "The file for this document could not be found on disk." });
+            }
+
+            return PhysicalFile(fullPath, document.ContentType, document.FileName);
         }
     }
 }
